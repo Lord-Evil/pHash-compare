@@ -1,0 +1,4 @@
+[submodule "third_party/pHash"]
+	path = third_party/pHash
+	url = https://github.com/Lord-Evil/pHash.git
+	branch = master 
