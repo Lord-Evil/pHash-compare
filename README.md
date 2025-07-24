@@ -97,6 +97,9 @@ sudo make install
 
 # Generate hashes only (no comparison)
 ./build/phash-compare -i -j 12 -g -s hashes.db *.jpg
+
+# Compare existing hashes in database (no input files needed)
+./build/phash-compare -i -s hashes.db
 ```
 
 ### Advanced Usage
@@ -109,7 +112,7 @@ sudo make install
 ./build/phash-compare -i -r ./photos -t jpg -t png -d 3 -s image_hashes.db -w
 
 # Use stdin for file list
-find . -name "*.mp4" | ./build/phash-compare -v -s hashes.db -w
+find . -name "*.mp4" | ./build/phash-compare -v -s hashes.db -w -
 
 # High-performance processing
 ./build/phash-compare -v -j 12 -r ./videos -t mp4 -d 5 -s hashes.db -w

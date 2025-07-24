@@ -92,6 +92,7 @@ The `phash-compare` tool uses perceptual hashing to detect duplicate or similar 
 - No new hash computation
 - Very fast for large collections
 - Useful for periodic duplicate checks
+- **Note**: When only `-s` is specified (no input files, no `-r` directories), the tool automatically compares all hashes in the database
 
 ### 4. Compare Without Saving (Temporary)
 ```bash
@@ -159,14 +160,15 @@ The `phash-compare` tool uses perceptual hashing to detect duplicate or similar 
 
 ### 10. Stdin File List
 ```bash
-find . -name "*.jpg" | ./phash-compare -i -s hashes.db -w
-find . -name "*.mp4" | ./phash-compare -v -s hashes.db -w
+find . -name "*.jpg" | ./phash-compare -i -s hashes.db -w -
+find . -name "*.mp4" | ./phash-compare -v -s hashes.db -w -
 ```
 **Use case**: Use external tools to generate file lists
-- Reads file paths from standard input
+- Reads file paths from standard input when `-` is specified as an argument
 - Works with `find`, `ls`, or any command that outputs file paths
 - One file path per line
 - Useful for complex file selection logic
+- **Note**: Use `-` as a special argument to explicitly read from stdin
 
 ### 11. Combined Advanced Usage
 ```bash

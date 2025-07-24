@@ -1,0 +1,240 @@
+.TH PHASH-COMPARE 1 "2024-07-24" "phash-compare 1.0.0" "User Commands"
+
+.SH NAME
+phash-compare \- perceptual hash comparison tool for videos and images
+
+.SH SYNOPSIS
+.B phash-compare
+[\fB\-d\fR \fIthreshold\fR] [\fB\-s\fR \fIsource_file\fR] [\fB\-w\fR] [\fB\-g\fR] [\fB\-j\fR \fIjobs\fR] [\fB\-i\fR|\fB\-v\fR] [\fB\-r\fR \fIdirectory\fR] [\fB\-t\fR \fIextension\fR] [\fIfiles\fR...]
+
+.SH DESCRIPTION
+.B phash-compare
+uses perceptual hashing to detect duplicate or similar videos and images. It can efficiently handle large collections by caching computed hashes in a database file and supports both video and image processing modes.
+
+The tool generates perceptual hashes that are robust against encoding differences, resolution changes, and minor quality variations. It supports multithreading for faster processing and can recursively search directories for files.
+
+.SH OPTIONS
+.TP
+.BR \-d " " \fIthreshold\fR
+Only show files with Hamming distance ≤ threshold. If not specified, all comparisons are shown.
+
+.TP
+.BR \-s " " \fIsource_file\fR
+Load existing hashes from database file. This allows the tool to skip re-computing hashes for files that have already been processed.
+
+.TP
+.BR \-w
+Write new hashes to database file. Use this when you want to save computed hashes for future use.
+
+.TP
+.BR \-g
+Generate hashes only (no comparison, automatically saves hashes). This mode is useful for building up a database of hashes over time.
+
+.TP
+.BR \-j " " \fIjobs\fR
+Number of parallel jobs for hash computation (default: 1). Use this to utilize multiple CPU cores for faster processing.
+
+.TP
+.BR \-i
+Image hash mode. Use this for processing images (jpg, png, bmp, etc.). Much faster than video hashing.
+
+.TP
+.BR \-v
+Video hash mode. Use this for processing videos (mp4, webm, avi, etc.). More accurate for video content.
+
+.TP
+.BR \-r " " \fIdirectory\fR
+Recursively search directory for files. Can be used multiple times to search multiple directories.
+
+.TP
+.BR \-t " " \fIextension\fR
+Filter by file extension (case-insensitive). Can be used multiple times to specify multiple extensions.
+
+.SH MODES
+The tool requires explicit mode selection:
+
+.TP
+.B Image Mode (\-i)
+Uses pHash's \fBph_dct_imagehash()\fR function for single-frame analysis. Much faster than video hashing and suitable for photo collections.
+
+.TP
+.B Video Mode (\-v)
+Uses pHash's \fBph_dct_videohash()\fR function for temporal analysis. More complex but better for detecting duplicate videos with different encoding.
+
+.SH USAGE EXAMPLES
+
+.SS Basic Usage
+.TP
+Generate hashes for images:
+.B phash-compare \-i \-g \-s hashes.db *.jpg
+
+.TP
+Find duplicate videos:
+.B phash-compare \-v \-d 5 \-s hashes.db \-w *.mp4
+
+.SS Recursive Search
+.TP
+Process all videos in multiple directories:
+.B phash-compare \-v \-r ./videos \-r ./backup \-t mp4 \-t webm \-s hashes.db \-w
+
+.TP
+Find duplicate images recursively:
+.B phash-compare \-i \-r ./photos \-t jpg \-t png \-d 3 \-s image_hashes.db \-w
+
+.SS Parallel Processing
+.TP
+Use 12 threads for fast processing:
+.B phash-compare \-v \-j 12 \-r ./videos \-t mp4 \-s hashes.db \-w
+
+.SS Stdin Input
+.TP
+Process files from find command:
+.B find . \-name "*.mp4" | phash-compare \-v \-s hashes.db \-w \-
+
+.SS Database-Only Comparison
+.TP
+Compare only existing hashes (no new computation):
+.B phash-compare \-v \-s hashes.db
+
+.SH OUTPUT FORMAT
+The tool outputs comparison results in the format:
+.RS
+.PP
+\fIdistance\fR \- \fIfile1\fR \- \fIfile2\fR
+.RE
+
+.PP
+Results are grouped by the first file and sorted by distance (ascending). Lower distance indicates more similar files.
+
+.SH DATABASE FORMAT
+The hash database uses a simple text format:
+.RS
+.PP
+\fIfilename\fR|\fIhash_length\fR|\fIhex_hash_data\fR
+.RE
+
+.PP
+Image hashes always have length 1, while video hashes typically have length 3 or more.
+
+.SH THRESHOLD SELECTION
+.TP
+.B Distance 0-2
+Nearly identical files
+.TP
+.B Distance 3-5
+Very similar files (recommended for duplicates)
+.TP
+.B Distance 6-10
+Moderately similar files
+.TP
+.B Distance >10
+Different files
+.PP
+Images often work better with lower thresholds (1-3).
+
+.SH PERFORMANCE CONSIDERATIONS
+
+.SS Hash Computation
+.TP
+.B First run
+Computes hashes for all files (slow but necessary)
+.TP
+.B Subsequent runs
+Only computes hashes for new files (fast)
+.TP
+.B Database-only comparison
+No hash computation (very fast)
+.TP
+.B Generate-only mode (\-g)
+Only computes hashes for files not in database (very efficient)
+.TP
+.B Parallel processing (\-j)
+Use multiple CPU cores for hash computation (much faster)
+
+.SS Memory Usage
+Hashes are loaded into memory for comparison. Large databases may require significant RAM. Consider processing in batches for very large collections. Parallel processing increases memory usage proportionally to number of threads.
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+Error (invalid arguments, file not found, etc.)
+
+.SH ENVIRONMENT
+No environment variables are used.
+
+.SH FILES
+.TP
+.B \fIdatabase_file\fR
+Hash database file specified with \-s option
+
+.SH DEPENDENCIES
+.TP
+.B libpHash
+Perceptual hashing library
+.TP
+.B FFmpeg
+Video processing (for video mode)
+.TP
+.B Image libraries
+JPEG, PNG, TIFF support (for image mode)
+
+.SH BUGS
+Report bugs to the project repository.
+
+.SH EXAMPLES
+
+.SS Automatic Duplicate Removal Script
+.RS
+.PP
+.nf
+#!/bin/bash
+hash_db="video_hashes.db"
+
+# Generate hashes and find duplicates
+phash-compare -v -d 5 -s "$hash_db" -w *.mp4 | while read -r line; do
+    # Extract the second filename (the duplicate to remove)
+    dupfile=$(echo "$line" | awk -F' - ' '{print $3}')
+    if [ -f "$dupfile" ]; then
+        echo "Removing duplicate: $dupfile"
+        rm -- "$dupfile"
+    fi
+done
+.fi
+.RE
+
+.SS Batch Processing with Recursive Search
+.RS
+.PP
+.nf
+#!/bin/bash
+hash_db="video_hashes.db"
+
+# Phase 1: Generate hashes for new videos
+echo "Generating hashes..."
+phash-compare -v -j 12 -r ./videos -r ./backup -t mp4 -t webm -s "$hash_db" -g
+
+# Phase 2: Compare and find duplicates
+echo "Finding duplicates..."
+phash-compare -v -d 5 -s "$hash_db" | while read -r line; do
+    dupfile=$(echo "$line" | awk -F' - ' '{print $3}')
+    if [ -f "$dupfile" ]; then
+        echo "Removing duplicate: $dupfile"
+        rm -- "$dupfile"
+    fi
+done
+.fi
+.RE
+
+.SH SEE ALSO
+.BR find (1),
+.BR ffmpeg (1),
+.BR jq (1)
+
+.SH AUTHOR
+Written for the pHash Compare project.
+
+.SH COPYRIGHT
+Copyright © 2024. This is free software; see the source for copying conditions. 

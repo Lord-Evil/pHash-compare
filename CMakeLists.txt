@@ -63,9 +63,10 @@ endif()
 # Add pHash as a subdirectory (submodule) with static library settings
 add_subdirectory(third_party/pHash)
 
-# Override pHash build options to use static library
+# Override pHash build options to use static library and prevent installation
 set(PHASH_DYNAMIC OFF CACHE BOOL "Build pHash dynamic library" FORCE)
 set(PHASH_STATIC ON CACHE BOOL "Build pHash static library" FORCE)
+set(PHASH_INSTALL OFF CACHE BOOL "Install pHash library and headers" FORCE)
 
 # Create the executable
 add_executable(phash-compare phash-compare.cpp)
@@ -108,10 +109,21 @@ install(TARGETS phash-compare
     RUNTIME DESTINATION bin
 )
 
-# Install manual
-install(FILES MANUAL.md
-    DESTINATION share/doc/phash-compare
-) 
+# Install man page
+install(FILES phash-compare.1
+    DESTINATION share/man/man1
+)
+
+# Create uninstall target
+if(NOT TARGET uninstall)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        IMMEDIATE @ONLY)
+
+    add_custom_target(uninstall
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_custom_command(TARGET phash-compare POST_BUILD

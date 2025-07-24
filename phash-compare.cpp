@@ -333,7 +333,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "  -r directory: recursively search directory for files" << std::endl;
                 std::cerr << "  -t extension: filter by file extension (can be used multiple times)" << std::endl;
                 std::cerr << "  Note: Either -i (image) or -v (video) mode must be specified" << std::endl;
-                std::cerr << "  If no files provided and no -r specified, read file list from stdin" << std::endl;
+                std::cerr << "  Use '-' as a file argument to read file list from stdin" << std::endl;
+                std::cerr << "  If no files provided and no -r specified, compare existing hashes in database" << std::endl;
                 return 1;
             default:
                 std::cerr << "Usage: " << argv[0] << " [-d threshold] [-s source_file] [-w] [-g] [-j jobs] [-i|-v] [-r directory] [-t extension] [files...]" << std::endl;
@@ -362,7 +363,14 @@ int main(int argc, char* argv[]) {
     
     // Add files from command line arguments
     for (int i = optind; i < argc; ++i) {
-        input_files.push_back(argv[i]);
+        if (std::string(argv[i]) == "-") {
+            // Special case: read from stdin
+            std::cerr << "Reading file list from stdin..." << std::endl;
+            auto stdin_files = read_files_from_stdin();
+            input_files.insert(input_files.end(), stdin_files.begin(), stdin_files.end());
+        } else {
+            input_files.push_back(argv[i]);
+        }
     }
     
     // Add files from recursive directory search
@@ -371,10 +379,56 @@ int main(int argc, char* argv[]) {
         input_files.insert(input_files.end(), recursive_files.begin(), recursive_files.end());
     }
     
-    // If no files specified anywhere, read from stdin
-    if (input_files.empty()) {
-        std::cerr << "Reading file list from stdin..." << std::endl;
-        input_files = read_files_from_stdin();
+    // If no files specified anywhere and we have a source file, just compare existing hashes
+    if (input_files.empty() && !source_file.empty()) {
+        std::cerr << "No input files specified, comparing existing hashes in database..." << std::endl;
+        
+        // Load existing hashes
+        std::map<std::string, std::pair<ulong64*, int>> existing_hashes = load_hashes(source_file);
+        if (existing_hashes.empty()) {
+            std::cerr << "Error: No hashes found in database " << source_file << std::endl;
+            return 1;
+        }
+        
+        std::cerr << "Loaded " << existing_hashes.size() << " hashes from " << source_file << std::endl;
+        
+        // Convert to vector for comparison
+        std::vector<VideoHash> hashes;
+        for (const auto& pair : existing_hashes) {
+            hashes.emplace_back(pair.first, pair.second.first, pair.second.second);
+        }
+        
+        // Compare all pairs and group by first file
+        std::map<std::string, std::vector<std::pair<int, std::string>>> grouped_results;
+        std::set<std::pair<std::string, std::string>> reported;
+        
+        for (size_t i = 0; i < hashes.size(); ++i) {
+            for (size_t j = i + 1; j < hashes.size(); ++j) {
+                int dist = hamming_distance(hashes[i].hash, hashes[i].length, hashes[j].hash, hashes[j].length);
+                if (threshold == -1 || dist <= threshold) {
+                    // Group by first filename and store distance with second filename
+                    grouped_results[hashes[i].filename].push_back({dist, hashes[j].filename});
+                    reported.insert({hashes[i].filename, hashes[j].filename});
+                }
+            }
+        }
+
+        // Print grouped and sorted results
+        for (const auto& group : grouped_results) {
+            const std::string& first_file = group.first;
+            const auto& comparisons = group.second;
+            
+            // Sort comparisons by distance (ascending)
+            std::vector<std::pair<int, std::string>> sorted_comparisons = comparisons;
+            std::sort(sorted_comparisons.begin(), sorted_comparisons.end());
+            
+            // Print all comparisons for this first file
+            for (const auto& comp : sorted_comparisons) {
+                std::cout << comp.first << " - " << first_file << " - " << comp.second << std::endl;
+            }
+        }
+        
+        return 0;
     }
     
     if (input_files.empty()) {
@@ -493,17 +547,29 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // For comparison, we need to include all existing hashes from database
+    std::vector<VideoHash> all_hashes_for_comparison;
+    
+    // Add all existing hashes from database
+    for (const auto& pair : existing_hashes) {
+        all_hashes_for_comparison.emplace_back(pair.first, pair.second.first, pair.second.second);
+    }
+    
+    // Add newly computed hashes
+    all_hashes_for_comparison.insert(all_hashes_for_comparison.end(), hashes.begin(), hashes.end());
+
     // Compare all pairs and group by first file
     std::map<std::string, std::vector<std::pair<int, std::string>>> grouped_results;
     std::set<std::pair<std::string, std::string>> reported;
     
-    for (size_t i = 0; i < hashes.size(); ++i) {
-        for (size_t j = i + 1; j < hashes.size(); ++j) {
-            int dist = hamming_distance(hashes[i].hash, hashes[i].length, hashes[j].hash, hashes[j].length);
+    for (size_t i = 0; i < all_hashes_for_comparison.size(); ++i) {
+        for (size_t j = i + 1; j < all_hashes_for_comparison.size(); ++j) {
+            int dist = hamming_distance(all_hashes_for_comparison[i].hash, all_hashes_for_comparison[i].length, 
+                                      all_hashes_for_comparison[j].hash, all_hashes_for_comparison[j].length);
             if (threshold == -1 || dist <= threshold) {
                 // Group by first filename and store distance with second filename
-                grouped_results[hashes[i].filename].push_back({dist, hashes[j].filename});
-                reported.insert({hashes[i].filename, hashes[j].filename});
+                grouped_results[all_hashes_for_comparison[i].filename].push_back({dist, all_hashes_for_comparison[j].filename});
+                reported.insert({all_hashes_for_comparison[i].filename, all_hashes_for_comparison[j].filename});
             }
         }
     }
