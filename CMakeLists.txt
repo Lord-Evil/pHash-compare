@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(phash_video_compare VERSION 1.0.0 LANGUAGES CXX)
+project(phash-compare VERSION 1.0.0 LANGUAGES CXX)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
@@ -68,10 +68,10 @@ set(PHASH_DYNAMIC OFF CACHE BOOL "Build pHash dynamic library" FORCE)
 set(PHASH_STATIC ON CACHE BOOL "Build pHash static library" FORCE)
 
 # Create the executable
-add_executable(phash_video_compare phash_video_compare.cpp)
+add_executable(phash-compare phash-compare.cpp)
 
 # Link libraries
-target_link_libraries(phash_video_compare
+target_link_libraries(phash-compare
     PRIVATE
     pHash
     Threads::Threads
@@ -81,7 +81,7 @@ target_link_libraries(phash_video_compare
 )
 
 # Include directories
-target_include_directories(phash_video_compare
+target_include_directories(phash-compare
     PRIVATE
     ${FFMPEG_INCLUDE_DIRS}
     ${IMAGE_LIBS_INCLUDE_DIRS}
@@ -90,32 +90,32 @@ target_include_directories(phash_video_compare
 )
 
 # Compiler flags
-target_compile_options(phash_video_compare
+target_compile_options(phash-compare
     PRIVATE
     ${FFMPEG_CFLAGS_OTHER}
     ${IMAGE_LIBS_CFLAGS_OTHER}
 )
 
 # Linker flags
-target_link_options(phash_video_compare
+target_link_options(phash-compare
     PRIVATE
     ${FFMPEG_LDFLAGS_OTHER}
     ${IMAGE_LIBS_LDFLAGS_OTHER}
 )
 
 # Install target
-install(TARGETS phash_video_compare
+install(TARGETS phash-compare
     RUNTIME DESTINATION bin
 )
 
 # Install manual
 install(FILES MANUAL.md
-    DESTINATION share/doc/phash_video_compare
+    DESTINATION share/doc/phash-compare
 ) 
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_custom_command(TARGET phash_video_compare POST_BUILD
-        COMMAND ${CMAKE_STRIP} $<TARGET_FILE:phash_video_compare>
-        COMMENT "Stripping phash_video_compare"
+    add_custom_command(TARGET phash-compare POST_BUILD
+        COMMAND ${CMAKE_STRIP} $<TARGET_FILE:phash-compare>
+        COMMENT "Stripping phash-compare"
     )
 endif() 

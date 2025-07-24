@@ -15,6 +15,8 @@
 #include <queue>
 #include <condition_variable>
 #include <algorithm>
+#include <filesystem>
+#include <regex>
 
 struct VideoHash {
     std::string filename;
@@ -171,24 +173,96 @@ void save_hashes(const std::string& filename, const std::vector<VideoHash>& hash
     }
 }
 
-// Worker thread function
-void hash_worker(ThreadSafeQueue<std::string>& work_queue, 
-                 ThreadSafeVector<VideoHash>& results,
-                 std::mutex& cerr_mutex) {
+// Recursively find files with specified extensions
+std::vector<std::string> find_files_recursive(const std::vector<std::string>& directories, 
+                                             const std::set<std::string>& extensions) {
+    std::vector<std::string> files;
+    
+    for (const auto& dir : directories) {
+        try {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
+                if (entry.is_regular_file()) {
+                    std::string ext = entry.path().extension().string();
+                    if (!ext.empty()) {
+                        // Remove leading dot and convert to lowercase
+                        ext = ext.substr(1);
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        
+                        if (extensions.empty() || extensions.find(ext) != extensions.end()) {
+                            files.push_back(entry.path().string());
+                        }
+                    }
+                }
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            std::cerr << "Warning: Could not access directory " << dir << ": " << e.what() << std::endl;
+        }
+    }
+    
+    return files;
+}
+
+// Read file list from stdin
+std::vector<std::string> read_files_from_stdin() {
+    std::vector<std::string> files;
+    std::string line;
+    
+    while (std::getline(std::cin, line)) {
+        // Trim whitespace
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+        
+        if (!line.empty()) {
+            files.push_back(line);
+        }
+    }
+    
+    return files;
+}
+
+// Worker thread function for video hashing
+void video_hash_worker(ThreadSafeQueue<std::string>& work_queue, 
+                       ThreadSafeVector<VideoHash>& results,
+                       std::mutex& cerr_mutex) {
     std::string filename;
     while (work_queue.pop(filename)) {
         int length = 0;
         ulong64* hash = ph_dct_videohash(filename.c_str(), length);
         if (!hash || length == 0) {
             std::lock_guard<std::mutex> lock(cerr_mutex);
-            std::cerr << "Failed to compute hash for " << filename << std::endl;
+            std::cerr << "Failed to compute video hash for " << filename << std::endl;
             continue;
         }
         
         results.push_back(VideoHash(filename, hash, length));
         
         std::lock_guard<std::mutex> lock(cerr_mutex);
-        std::cerr << "Computed hash for " << filename << std::endl;
+        std::cerr << "Computed video hash for " << filename << std::endl;
+    }
+}
+
+// Worker thread function for image hashing
+void image_hash_worker(ThreadSafeQueue<std::string>& work_queue, 
+                       ThreadSafeVector<VideoHash>& results,
+                       std::mutex& cerr_mutex) {
+    std::string filename;
+    while (work_queue.pop(filename)) {
+        ulong64 hash;
+        int result = ph_dct_imagehash(filename.c_str(), hash);
+        if (result != 0 || hash == 0) {
+            std::lock_guard<std::mutex> lock(cerr_mutex);
+            std::cerr << "Failed to compute image hash for " << filename << std::endl;
+            continue;
+        }
+        
+        // For images, we create a single-element hash array
+        ulong64* hash_array = (ulong64*)malloc(sizeof(ulong64));
+        hash_array[0] = hash;
+        
+        results.push_back(VideoHash(filename, hash_array, 1));
+        
+        std::lock_guard<std::mutex> lock(cerr_mutex);
+        std::cerr << "Computed image hash for " << filename << std::endl;
     }
 }
 
@@ -198,10 +272,14 @@ int main(int argc, char* argv[]) {
     bool write_hashes = false;
     bool generate_only = false;
     int num_jobs = 1; // Default to single-threaded
+    bool image_mode = false;
+    bool video_mode = false;
+    std::vector<std::string> recursive_dirs;
+    std::set<std::string> file_types;
     int opt;
 
     // Parse command line arguments using getopt
-    while ((opt = getopt(argc, argv, "d:s:wgj:")) != -1) {
+    while ((opt = getopt(argc, argv, "d:s:wgj:ivr:t:")) != -1) {
         switch (opt) {
             case 'd':
                 threshold = std::atoi(optarg);
@@ -227,19 +305,50 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
                 break;
+            case 'i':
+                image_mode = true;
+                break;
+            case 'v':
+                video_mode = true;
+                break;
+            case 'r':
+                recursive_dirs.push_back(optarg);
+                break;
+            case 't':
+                {
+                    std::string ext = optarg;
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    file_types.insert(ext);
+                }
+                break;
             case '?':
-                std::cerr << "Usage: " << argv[0] << " [-d threshold] [-s source_file] [-w] [-g] [-j jobs] [video1 video2 ...]" << std::endl;
-                std::cerr << "  -d threshold: only show videos with distance <= threshold" << std::endl;
+                std::cerr << "Usage: " << argv[0] << " [-d threshold] [-s source_file] [-w] [-g] [-j jobs] [-i|-v] [-r directory] [-t extension] [files...]" << std::endl;
+                std::cerr << "  -d threshold: only show files with distance <= threshold" << std::endl;
                 std::cerr << "  -s source_file: load existing hashes from file" << std::endl;
                 std::cerr << "  -w: write new hashes to source file" << std::endl;
                 std::cerr << "  -g: generate hashes only (no comparison, implies -w)" << std::endl;
                 std::cerr << "  -j jobs: number of parallel jobs (default: 1)" << std::endl;
-                std::cerr << "  If no video files provided, only compare hashes in database" << std::endl;
+                std::cerr << "  -i: image hash mode" << std::endl;
+                std::cerr << "  -v: video hash mode" << std::endl;
+                std::cerr << "  -r directory: recursively search directory for files" << std::endl;
+                std::cerr << "  -t extension: filter by file extension (can be used multiple times)" << std::endl;
+                std::cerr << "  Note: Either -i (image) or -v (video) mode must be specified" << std::endl;
+                std::cerr << "  If no files provided and no -r specified, read file list from stdin" << std::endl;
                 return 1;
             default:
-                std::cerr << "Usage: " << argv[0] << " [-d threshold] [-s source_file] [-w] [-g] [-j jobs] [video1 video2 ...]" << std::endl;
+                std::cerr << "Usage: " << argv[0] << " [-d threshold] [-s source_file] [-w] [-g] [-j jobs] [-i|-v] [-r directory] [-t extension] [files...]" << std::endl;
                 return 1;
         }
+    }
+
+    // Check that exactly one mode is specified
+    if (!image_mode && !video_mode) {
+        std::cerr << "Error: Must specify either -i (image mode) or -v (video mode)" << std::endl;
+        return 1;
+    }
+    if (image_mode && video_mode) {
+        std::cerr << "Error: Cannot specify both -i (image mode) and -v (video mode)" << std::endl;
+        return 1;
     }
 
     // Early exit if -g specified without source file
@@ -247,6 +356,33 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: -g specified but no source file (-s) provided. Cannot save hashes." << std::endl;
         return 1;
     }
+
+    // Collect input files
+    std::vector<std::string> input_files;
+    
+    // Add files from command line arguments
+    for (int i = optind; i < argc; ++i) {
+        input_files.push_back(argv[i]);
+    }
+    
+    // Add files from recursive directory search
+    if (!recursive_dirs.empty()) {
+        auto recursive_files = find_files_recursive(recursive_dirs, file_types);
+        input_files.insert(input_files.end(), recursive_files.begin(), recursive_files.end());
+    }
+    
+    // If no files specified anywhere, read from stdin
+    if (input_files.empty()) {
+        std::cerr << "Reading file list from stdin..." << std::endl;
+        input_files = read_files_from_stdin();
+    }
+    
+    if (input_files.empty()) {
+        std::cerr << "Error: No input files specified" << std::endl;
+        return 1;
+    }
+    
+    std::cerr << "Found " << input_files.size() << " files to process" << std::endl;
 
     // Load existing hashes if source file provided
     std::map<std::string, std::pair<ulong64*, int>> existing_hashes;
@@ -257,71 +393,75 @@ int main(int argc, char* argv[]) {
 
     std::vector<VideoHash> hashes;
     
-    // If no video files provided, only use existing hashes from database
-    if (optind >= argc) {
-        if (source_file.empty()) {
-            std::cerr << "Error: No source file (-s) provided and no video files specified" << std::endl;
-            return 1;
+    // Collect files that need hash computation
+    std::vector<std::string> files_to_process;
+    for (const auto& file : input_files) {
+        auto it = existing_hashes.find(file);
+        if (it != existing_hashes.end()) {
+            hashes.emplace_back(file, it->second.first, it->second.second);
+            std::cerr << "Loaded hash for " << file << std::endl;
+        } else {
+            files_to_process.push_back(file);
         }
-        // Load all existing hashes into the comparison vector
-        for (const auto& pair : existing_hashes) {
-            hashes.emplace_back(pair.first, pair.second.first, pair.second.second);
-        }
-        std::cerr << "Comparing " << hashes.size() << " videos from database only" << std::endl;
-    } else {
-        // Collect files that need hash computation
-        std::vector<std::string> files_to_process;
-        for (int i = optind; i < argc; ++i) {
-            auto it = existing_hashes.find(argv[i]);
-            if (it != existing_hashes.end()) {
-                hashes.emplace_back(argv[i], it->second.first, it->second.second);
-                std::cerr << "Loaded hash for " << argv[i] << std::endl;
-            } else {
-                files_to_process.push_back(argv[i]);
-            }
-        }
+    }
 
-        // Process files that need hash computation (with multithreading if requested)
-        if (!files_to_process.empty()) {
-            if (num_jobs > 1 && files_to_process.size() > 1) {
-                // Multi-threaded processing
-                std::cerr << "Processing " << files_to_process.size() << " files with " << num_jobs << " threads..." << std::endl;
-                
-                ThreadSafeQueue<std::string> work_queue;
-                ThreadSafeVector<VideoHash> thread_results;
-                std::mutex cerr_mutex;
-                
-                // Add work to queue
-                for (const auto& file : files_to_process) {
-                    work_queue.push(file);
+    // Process files that need hash computation (with multithreading if requested)
+    if (!files_to_process.empty()) {
+        if (num_jobs > 1 && files_to_process.size() > 1) {
+            // Multi-threaded processing
+            std::cerr << "Processing " << files_to_process.size() << " files with " << num_jobs << " threads..." << std::endl;
+            
+            ThreadSafeQueue<std::string> work_queue;
+            ThreadSafeVector<VideoHash> thread_results;
+            std::mutex cerr_mutex;
+            
+            // Add work to queue
+            for (const auto& file : files_to_process) {
+                work_queue.push(file);
+            }
+            
+            // Start worker threads
+            std::vector<std::thread> threads;
+            for (int i = 0; i < num_jobs; ++i) {
+                if (image_mode) {
+                    threads.emplace_back(image_hash_worker, std::ref(work_queue), std::ref(thread_results), std::ref(cerr_mutex));
+                } else {
+                    threads.emplace_back(video_hash_worker, std::ref(work_queue), std::ref(thread_results), std::ref(cerr_mutex));
                 }
-                
-                // Start worker threads
-                std::vector<std::thread> threads;
-                for (int i = 0; i < num_jobs; ++i) {
-                    threads.emplace_back(hash_worker, std::ref(work_queue), std::ref(thread_results), std::ref(cerr_mutex));
-                }
-                
-                // Wait for all threads to complete
-                for (auto& thread : threads) {
-                    thread.join();
-                }
-                
-                // Collect results
-                auto thread_hashes = thread_results.get_all();
-                hashes.insert(hashes.end(), thread_hashes.begin(), thread_hashes.end());
-                
-            } else {
-                // Single-threaded processing
-                for (const auto& file : files_to_process) {
+            }
+            
+            // Wait for all threads to complete
+            for (auto& thread : threads) {
+                thread.join();
+            }
+            
+            // Collect results
+            auto thread_hashes = thread_results.get_all();
+            hashes.insert(hashes.end(), thread_hashes.begin(), thread_hashes.end());
+            
+        } else {
+            // Single-threaded processing
+            for (const auto& file : files_to_process) {
+                if (image_mode) {
+                    ulong64 hash;
+                    int result = ph_dct_imagehash(file.c_str(), hash);
+                    if (result != 0 || hash == 0) {
+                        std::cerr << "Failed to compute image hash for " << file << std::endl;
+                        continue;
+                    }
+                    ulong64* hash_array = (ulong64*)malloc(sizeof(ulong64));
+                    hash_array[0] = hash;
+                    hashes.emplace_back(file, hash_array, 1);
+                    std::cerr << "Computed image hash for " << file << std::endl;
+                } else {
                     int length = 0;
                     ulong64* hash = ph_dct_videohash(file.c_str(), length);
                     if (!hash || length == 0) {
-                        std::cerr << "Failed to compute hash for " << file << std::endl;
+                        std::cerr << "Failed to compute video hash for " << file << std::endl;
                         continue;
                     }
                     hashes.emplace_back(file, hash, length);
-                    std::cerr << "Computed hash for " << file << std::endl;
+                    std::cerr << "Computed video hash for " << file << std::endl;
                 }
             }
         }
@@ -384,7 +524,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Save new hashes if requested
-    if (write_hashes && !source_file.empty() && optind < argc) {
+    if (write_hashes && !source_file.empty() && !files_to_process.empty()) {
         save_hashes(source_file, hashes);
         std::cerr << "Saved hashes to " << source_file << std::endl;
     }

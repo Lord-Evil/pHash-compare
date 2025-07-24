@@ -2,7 +2,7 @@
 
 set -e  # Exit on any error
 
-echo "=== pHash Video Compare Build Script (Gentoo) ==="
+echo "=== pHash Compare Build Script (Gentoo) ==="
 
 # Check if we're in the right directory
 if [ ! -f "CMakeLists.txt" ]; then
@@ -107,13 +107,13 @@ make -j$(nproc)
 
 echo ""
 echo "=== Build completed successfully! ==="
-echo "Executable location: build/phash_video_compare"
+echo "Executable location: build/phash-compare"
 echo ""
 echo "To install system-wide:"
 echo "  cd build && sudo make install"
 echo ""
 echo "To run the tool:"
-echo "  ./build/phash_video_compare --help"
+echo "  ./build/phash-compare -h"
 echo ""
 echo "To test the build:"
 echo "  ./test_build.sh" 

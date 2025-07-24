@@ -59,7 +59,7 @@ hash_db="$USERNAME/video_hashes.db"
 
 # Generate hashes for new videos and compare all videos (including existing ones)
 echo "Generating hashes and comparing videos..."
-./phash_video_compare -wd 5 -s "$hash_db" ./$USERNAME/*.mp4 2>/dev/null | while read -r line; do
+./build/phash-compare -v -d 5 -s "$hash_db" -w ./$USERNAME/*.mp4 2>/dev/null | while read -r line; do
     # Parse the new format: "distance - file1 - file2"
     # Extract the second filename (the one to remove)
     dupfile=$(echo "$line" | awk -F' - ' '{print $3}')
